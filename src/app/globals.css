@@ -309,7 +309,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 .gauge-label {
   position: absolute;
-  bottom: -8px;
+  bottom: -18px;
   font-size: 0.625rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
