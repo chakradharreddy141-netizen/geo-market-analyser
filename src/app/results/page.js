@@ -59,41 +59,56 @@ function ResultsContent() {
           const pct = Math.floor((i / sectorsToAnalyze.length) * 100);
           setProgress(pct);
 
-          setSteps((prev) => [...prev, { type: "log", sector, message: `Initializing analysis for ${sector}...` }]);
-          setSteps((prev) => [...prev, { type: "log", sector, message: `Scraping Google Maps data for ${sector}...` }]);
-
-          const res = await fetch('/api/analyze-sector', {
+          setSteps((prev) => [...prev, { type: "log", sector, message: `Scraping Google Maps listings for "${sector}"...` }]);
+          
+          // 1. Scrape
+          const scrapeRes = await fetch('/api/scrape-sector', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ location, sector })
           });
+          if (!scrapeRes.ok) throw new Error(`Scrape failed for ${sector} (Status ${scrapeRes.status})`);
+          const scrapeData = await scrapeRes.json();
+          if (scrapeData.error) throw new Error(scrapeData.error);
+          const businesses = scrapeData.businesses || [];
 
-          if (!res.ok) {
-            throw new Error(`Failed to analyze ${sector} (Status ${res.status})`);
-          }
+          setSteps((prev) => [
+            ...prev,
+            { type: "scraped", sector, count: businesses.length, message: `Found ${businesses.length} businesses for ${sector}` }
+          ]);
 
-          const data = await res.json();
-          if (data.error) {
-            setSteps((prev) => [...prev, { type: "error", sector, message: `Error: ${data.error}` }]);
-            continue;
-          }
+          // 2. Research
+          setSteps((prev) => [...prev, { type: "log", sector, message: `Performing deep competitor research for "${sector}"...` }]);
+          const researchRes = await fetch('/api/research-sector', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ location, sector, businesses })
+          });
+          if (!researchRes.ok) throw new Error(`Research failed for ${sector} (Status ${researchRes.status})`);
+          const researchResponse = await researchRes.json();
+          if (researchResponse.error) throw new Error(researchResponse.error);
+          const researchData = researchResponse.researchData;
+
+          // 3. Synthesize
+          setSteps((prev) => [...prev, { type: "log", sector, message: `Generating SWOT analysis and opportunity score...` }]);
+          const synthesizeRes = await fetch('/api/synthesize-sector', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ location, sector, businesses, researchData })
+          });
+          if (!synthesizeRes.ok) throw new Error(`Synthesis failed for ${sector} (Status ${synthesizeRes.status})`);
+          const synthesizeData = await synthesizeRes.json();
+          if (synthesizeData.error) throw new Error(synthesizeData.error);
+          const analysis = synthesizeData.analysis;
 
           // Accumulate data
-          if (data.analysis) {
-            localResults.sectors.push(data.analysis);
-            setSteps((prev) => [
-              ...prev,
-              { type: "analyzed", sector, score: data.analysis.opportunity_score, message: `Analyzed ${sector}` }
-            ]);
-          }
-          
-          if (data.businesses) {
-            localResults.businesses[data.sectorName] = data.businesses;
-            setSteps((prev) => [
-              ...prev,
-              { type: "scraped", sector, count: data.businesses.length, message: `Found ${data.businesses.length} businesses` }
-            ]);
-          }
+          localResults.sectors.push(analysis);
+          localResults.businesses[analysis.sector_name] = businesses;
+
+          setSteps((prev) => [
+            ...prev,
+            { type: "analyzed", sector, score: analysis.opportunity_score, message: `Analyzed ${sector} (Score: ${analysis.opportunity_score}%)` }
+          ]);
         }
 
         setProgress(100);
