@@ -16,8 +16,8 @@ async function searchTavily(query) {
       body: JSON.stringify({
         api_key: TAVILY_API_KEY,
         query,
-        search_depth: 'advanced',
-        max_results: 4,
+        search_depth: 'basic',
+        max_results: 3,
       }),
     });
 
@@ -52,33 +52,42 @@ export async function runDeepResearch(location, sectorName, businesses) {
     competitor_intel: [],
   };
 
-  // 1. High-level market search
-  console.log('[research] Performing high-level market search...');
   const sectorQuery = `${sectorName} in ${location} reviews complaints pricing competition`;
-  researchData.high_level_intel = await searchTavily(sectorQuery);
-
-  // 2. Deep-dive top 2 competitors (by rating, with most reviews)
+  
+  // Find top competitors (by rating, with most reviews)
   const validRated = businesses.filter(b => b.rating !== null && b.rating !== undefined);
   const topCompetitors = validRated
     .sort((a, b) => {
-      // Primary: rating desc, Secondary: reviews desc
       if (b.rating !== a.rating) return b.rating - a.rating;
       return (b.reviews || 0) - (a.reviews || 0);
     })
     .slice(0, 2);
 
-  for (const comp of topCompetitors) {
-    console.log(`[research] Researching competitor: ${comp.name}...`);
-    const compQuery = `${comp.name} ${location} services price details quality of service`;
-    const compResults = await searchTavily(compQuery);
-    researchData.competitor_intel.push({
-      name: comp.name,
-      rating: comp.rating,
-      address: comp.address,
-      url: comp.url,
-      intel: compResults,
-    });
-  }
+  const promises = [];
 
+  // 1. High-level market search
+  promises.push(
+    searchTavily(sectorQuery).then((results) => {
+      researchData.high_level_intel = results;
+    })
+  );
+
+  // 2. Competitor investigations
+  topCompetitors.forEach((comp) => {
+    const compQuery = `${comp.name} ${location} services price details quality of service`;
+    promises.push(
+      searchTavily(compQuery).then((results) => {
+        researchData.competitor_intel.push({
+          name: comp.name,
+          rating: comp.rating,
+          address: comp.address,
+          url: comp.url,
+          intel: results,
+        });
+      })
+    );
+  });
+
+  await Promise.all(promises);
   return researchData;
 }

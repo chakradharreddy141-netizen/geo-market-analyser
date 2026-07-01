@@ -59,8 +59,8 @@ function ResultsContent() {
           const pct = Math.floor((i / sectorsToAnalyze.length) * 100);
           setProgress(pct);
 
-          setSteps((prev) => [...prev, { type: "log", message: `Initializing analysis for ${sector}...` }]);
-          setSteps((prev) => [...prev, { type: "log", message: `Scraping Google Maps data for ${sector}...` }]);
+          setSteps((prev) => [...prev, { type: "log", sector, message: `Initializing analysis for ${sector}...` }]);
+          setSteps((prev) => [...prev, { type: "log", sector, message: `Scraping Google Maps data for ${sector}...` }]);
 
           const res = await fetch('/api/analyze-sector', {
             method: 'POST',
