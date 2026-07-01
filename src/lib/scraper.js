@@ -1,9 +1,9 @@
 // Google Maps Scraper — Improved accuracy with Playwright
 // Uses CSS selectors + fallback text parsing + detail panel click-through
 
-import { chromium } from 'playwright';
-
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isVercel = !!process.env.VERCEL;
 
 /**
  * Scrape Google Maps for businesses in a given sector and location
@@ -20,33 +20,46 @@ export async function scrapeGoogleMaps(location, sector, onProgress) {
 
   log(`Starting scrape: "${sector}" in "${location}"`);
 
+  // Gracefully fallback to AI search scraper if on Vercel
+  if (isVercel) {
+    log('Running on Vercel. Playwright is disabled in serverless functions.');
+    return scrapeViaTavilyAndGemini(location, sector, log);
+  }
+
   let browser;
   try {
+    const { chromium } = await import('playwright');
     browser = await chromium.launch({ headless: true });
   } catch (launchErr) {
     log(`Playwright browser launch failed: ${launchErr.message}`);
     log('Attempting to find Chromium in common paths...');
     
-    // Try common Playwright Chromium paths on Windows
-    const possiblePaths = [
-      process.env.PLAYWRIGHT_BROWSERS_PATH,
-      'C:\\Users\\' + (process.env.USERNAME || 'chakr') + '\\AppData\\Local\\ms-playwright',
-    ].filter(Boolean);
+    try {
+      const { chromium } = await import('playwright');
+      // Try common Playwright Chromium paths on Windows
+      const possiblePaths = [
+        process.env.PLAYWRIGHT_BROWSERS_PATH,
+        'C:\\Users\\' + (process.env.USERNAME || 'chakr') + '\\AppData\\Local\\ms-playwright',
+      ].filter(Boolean);
 
-    for (const basePath of possiblePaths) {
-      try {
-        browser = await chromium.launch({ 
-          headless: true,
-          executablePath: undefined, // let Playwright find it
-        });
-        break;
-      } catch (e) {
-        continue;
+      for (const basePath of possiblePaths) {
+        try {
+          browser = await chromium.launch({ 
+            headless: true,
+            executablePath: undefined, // let Playwright find it
+          });
+          break;
+        } catch (e) {
+          continue;
+        }
       }
+    } catch (importErr) {
+      log(`Playwright import failed: ${importErr.message}`);
     }
 
     if (!browser) {
-      throw new Error('Could not launch Playwright Chromium. Run: npx playwright install chromium');
+      log('Could not launch Playwright Chromium. Falling back to Tavily + Gemini AI search scraper...');
+      return scrapeViaTavilyAndGemini(location, sector, log);
     }
   }
 
@@ -381,3 +394,107 @@ function levenshtein(a, b) {
 
   return matrix[b.length][a.length];
 }
+
+async function scrapeViaTavilyAndGemini(location, sector, log) {
+  log(`Executing AI-assisted search extraction...`);
+  
+  const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+  if (!TAVILY_API_KEY || !GEMINI_API_KEY) {
+    log(`API keys missing. Please configure TAVILY_API_KEY and GEMINI_API_KEY.`);
+    return [];
+  }
+
+  // 1. Search Tavily for businesses list
+  log(`Searching local businesses via Tavily...`);
+  const query = `list of ${sector} in ${location} with Google reviews ratings and addresses`;
+  
+  let searchResults = [];
+  try {
+    const response = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: TAVILY_API_KEY,
+        query,
+        search_depth: 'advanced',
+        max_results: 6,
+      }),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      searchResults = data.results || [];
+    }
+  } catch (err) {
+    log(`Tavily search failed: ${err.message}`);
+    return [];
+  }
+
+  if (searchResults.length === 0) {
+    log(`No business listings returned from Tavily.`);
+    return [];
+  }
+
+  // 2. Format results for Gemini extraction
+  log(`Parsing structured listings via Gemini AI...`);
+  let searchSummary = '';
+  for (const res of searchResults) {
+    searchSummary += `Title: ${res.title}\nURL: ${res.url}\nContent: ${res.content}\n---\n`;
+  }
+
+  const prompt = `You are a data extraction assistant. Extract all local businesses mentioned in the search results below for the sector "${sector}" in "${location}".
+
+Search Results:
+${searchSummary}
+
+Extract as many businesses as possible. For each business, extract:
+- name: Business name
+- rating: Google rating value as a float (e.g. 4.6), or null if not mentioned
+- reviews: Count of reviews as an integer, or 0 if not mentioned
+- category: Specific business category (e.g. "Gym", "Fitness center")
+- address: Relative or full street address (e.g. "NH 44, Jammalamadugu"), or location name if not specified
+- url: Google Maps URL or business website URL if mentioned, or null
+
+Return the list as a valid JSON array matching this exact schema:
+[
+  {
+    "name": "string",
+    "rating": 4.5,
+    "reviews": 23,
+    "category": "string",
+    "address": "string",
+    "url": "string or null",
+    "source": "Google Maps Search"
+  }
+]`;
+
+  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+  try {
+    const response = await fetch(geminiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: 'application/json' },
+      }),
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) {
+        const parsed = JSON.parse(text);
+        log(`Successfully extracted ${parsed.length} businesses.`);
+        return parsed;
+      }
+    }
+  } catch (err) {
+    log(`Gemini extraction failed: ${err.message}`);
+  }
+
+  return [];
+}
+

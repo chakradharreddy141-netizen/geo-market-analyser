@@ -39,11 +39,25 @@ export default function HomePage() {
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to start analysis");
+        let errMsg = `Server returned status ${res.status}`;
+        try {
+          const contentType = res.headers.get("content-type");
+          if (contentType && contentType.includes("application/json")) {
+            const data = await res.json();
+            errMsg = data.error || errMsg;
+          }
+        } catch (e) {}
+        throw new Error(errMsg);
       }
 
-      const { jobId } = await res.json();
+      let jobId;
+      try {
+        const data = await res.json();
+        jobId = data.jobId;
+      } catch (e) {
+        throw new Error("Invalid response format received from server.");
+      }
+      
       router.push(`/results/${jobId}`);
     } catch (err) {
       setError(err.message);
