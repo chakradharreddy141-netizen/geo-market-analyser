@@ -22,47 +22,13 @@ export default function HomePage() {
       return;
     }
 
-    setError("");
-    setLoading(true);
-
-    try {
-      const payload = {
-        location: location.trim(),
-        targetSector: selectedSector,
-        customSector: selectedSector === "other" ? customSector.trim() : null,
-      };
-
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        let errMsg = `Server returned status ${res.status}`;
-        try {
-          const contentType = res.headers.get("content-type");
-          if (contentType && contentType.includes("application/json")) {
-            const data = await res.json();
-            errMsg = data.error || errMsg;
-          }
-        } catch (e) {}
-        throw new Error(errMsg);
-      }
-
-      let jobId;
-      try {
-        const data = await res.json();
-        jobId = data.jobId;
-      } catch (e) {
-        throw new Error("Invalid response format received from server.");
-      }
-      
-      router.push(`/results/${jobId}`);
-    } catch (err) {
-      setError(err.message);
-      setLoading(false);
-    }
+    const target = selectedSector === "other" ? customSector.trim() : selectedSector;
+    const params = new URLSearchParams({
+      location: location.trim(),
+      targetSector: target
+    });
+    
+    router.push(`/results?${params.toString()}`);
   };
 
   return (
@@ -92,7 +58,7 @@ export default function HomePage() {
               id="location"
               type="text"
               className="input"
-              placeholder="e.g. Jammalamadugu, Andhra Pradesh"
+              placeholder="e.g. City, Town, Sub-city etc"
               value={location}
               onChange={(e) => setLocation(e.target.value)}
               autoFocus

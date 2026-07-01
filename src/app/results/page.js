@@ -1,9 +1,13 @@
 "use client";
-import { useState, useEffect, useRef, use } from "react";
-import { LOADING_INSIGHTS } from "@/lib/sectors";
+import { useState, useEffect, useRef, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import { LOADING_INSIGHTS, SECTORS } from "@/lib/sectors";
 
-export default function ResultsPage({ params }) {
-  const { id } = use(params);
+function ResultsContent() {
+  const searchParams = useSearchParams();
+  const location = searchParams.get("location") || "";
+  const targetSector = searchParams.get("targetSector") || "none";
+
   const [status, setStatus] = useState("connecting");
   const [progress, setProgress] = useState(0);
   const [steps, setSteps] = useState([]);
@@ -13,6 +17,16 @@ export default function ResultsPage({ params }) {
   const [insightIdx, setInsightIdx] = useState(0);
   const logRef = useRef(null);
 
+  // Sector calculation
+  const defaultSectors = ["Restaurants", "Supermarkets", "Gyms", "Pharmacies", "Clothing Stores"];
+  let sectorsToAnalyze = [];
+  if (targetSector !== "none") {
+    sectorsToAnalyze.push(targetSector);
+    sectorsToAnalyze.push(...defaultSectors.filter((s) => s.toLowerCase() !== targetSector.toLowerCase()).slice(0, 2));
+  } else {
+    sectorsToAnalyze = defaultSectors.slice(0, 3);
+  }
+
   // Rotate insight cards
   useEffect(() => {
     const timer = setInterval(() => {
@@ -21,40 +35,100 @@ export default function ResultsPage({ params }) {
     return () => clearInterval(timer);
   }, []);
 
-  // Connect to SSE stream
+  // Orchestrate analysis loop
   useEffect(() => {
-    const eventSource = new EventSource(`/api/status/${id}`);
+    if (!location) {
+      setError("No location provided.");
+      setStatus("failed");
+      return;
+    }
 
-    eventSource.onmessage = (event) => {
+    const runAnalysis = async () => {
+      setStatus("running");
+      const localResults = {
+        location,
+        targetSector: targetSector !== "none" ? targetSector : "All Sectors",
+        sectors: [],
+        businesses: {},
+        summary: {}
+      };
+
       try {
-        const data = JSON.parse(event.data);
-        if (data.status) setStatus(data.status);
-        if (data.progress !== undefined) setProgress(data.progress);
-        if (data.steps) setSteps(data.steps);
-        if (data.currentStep) {
-          setSteps((prev) => [...prev, data.currentStep]);
-        }
-        if (data.error) setError(data.error);
+        for (let i = 0; i < sectorsToAnalyze.length; i++) {
+          const sector = sectorsToAnalyze[i];
+          const pct = Math.floor((i / sectorsToAnalyze.length) * 100);
+          setProgress(pct);
 
-        if (data.status === "completed" || data.status === "failed") {
-          eventSource.close();
-          if (data.status === "completed") {
-            fetchResults();
+          setSteps((prev) => [...prev, { type: "log", message: `Initializing analysis for ${sector}...` }]);
+          setSteps((prev) => [...prev, { type: "log", message: `Scraping Google Maps data for ${sector}...` }]);
+
+          const res = await fetch('/api/analyze-sector', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ location, sector })
+          });
+
+          if (!res.ok) {
+            throw new Error(`Failed to analyze ${sector} (Status ${res.status})`);
+          }
+
+          const data = await res.json();
+          if (data.error) {
+            setSteps((prev) => [...prev, { type: "error", sector, message: `Error: ${data.error}` }]);
+            continue;
+          }
+
+          // Accumulate data
+          if (data.analysis) {
+            localResults.sectors.push(data.analysis);
+            setSteps((prev) => [
+              ...prev,
+              { type: "analyzed", sector, score: data.analysis.opportunity_score, message: `Analyzed ${sector}` }
+            ]);
+          }
+          
+          if (data.businesses) {
+            localResults.businesses[data.sectorName] = data.businesses;
+            setSteps((prev) => [
+              ...prev,
+              { type: "scraped", sector, count: data.businesses.length, message: `Found ${data.businesses.length} businesses` }
+            ]);
           }
         }
-      } catch (e) {
-        // ignore parse errors from heartbeats
+
+        setProgress(100);
+
+        // Summarize
+        if (localResults.sectors.length > 0) {
+          localResults.sectors.sort((a, b) => b.opportunity_score - a.opportunity_score);
+          let totalBusinesses = 0;
+          Object.values(localResults.businesses).forEach((arr) => {
+            totalBusinesses += arr.length;
+          });
+
+          localResults.summary = {
+            total_sectors_analyzed: localResults.sectors.length,
+            total_businesses_scraped: totalBusinesses,
+            best_opportunity: localResults.sectors[0].sector_name,
+            lowest_competition_sector: localResults.sectors.reduce((prev, current) =>
+              prev.density_level === "Low" ? prev : current
+            ).sector_name,
+          };
+          
+          setResults(localResults);
+          setStatus("completed");
+        } else {
+          setError("No data could be analyzed.");
+          setStatus("failed");
+        }
+      } catch (err) {
+        setError(err.message);
+        setStatus("failed");
       }
     };
 
-    eventSource.onerror = () => {
-      eventSource.close();
-      // Try fetching results directly
-      fetchResults();
-    };
-
-    return () => eventSource.close();
-  }, [id]);
+    runAnalysis();
+  }, [location, targetSector]);
 
   // Auto-scroll log
   useEffect(() => {
@@ -62,22 +136,6 @@ export default function ResultsPage({ params }) {
       logRef.current.scrollTop = logRef.current.scrollHeight;
     }
   }, [steps]);
-
-  const fetchResults = async () => {
-    try {
-      const res = await fetch(`/api/results/${id}`);
-      const data = await res.json();
-      if (data.status === "completed" && data.results) {
-        setResults(data.results);
-        setStatus("completed");
-      } else if (data.status === "failed") {
-        setError(data.error);
-        setStatus("failed");
-      }
-    } catch (e) {
-      // Will retry via SSE
-    }
-  };
 
   const toggleExpand = (sectorName) => {
     setExpandedSectors((prev) => ({
@@ -91,16 +149,6 @@ export default function ResultsPage({ params }) {
     if (score >= 50) return "var(--gold)";
     return "var(--red)";
   };
-
-  // Get unique sector phases from steps
-  const sectorPhases = [];
-  const seenSectors = new Set();
-  for (const step of steps) {
-    if (step.sector && !seenSectors.has(step.sector)) {
-      seenSectors.add(step.sector);
-      sectorPhases.push(step.sector);
-    }
-  }
 
   const getPhaseStatus = (sector) => {
     const sectorSteps = steps.filter((s) => s.sector === sector);
@@ -127,10 +175,9 @@ export default function ResultsPage({ params }) {
           </p>
           <h1 className="text-heading">Scanning the market for you...</h1>
           <p className="text-caption" style={{ marginTop: "0.5rem" }}>
-            This typically takes 2–4 minutes depending on the number of sectors.
+            Analyzing each sector via Google Maps and AI...
           </p>
 
-          {/* Progress bar */}
           <div
             style={{
               marginTop: "1.5rem",
@@ -158,7 +205,6 @@ export default function ResultsPage({ params }) {
           </p>
         </div>
 
-        {/* Insight Carousel */}
         <div className="insight-carousel" style={{ marginBottom: "2rem" }}>
           {LOADING_INSIGHTS.map((insight, idx) => (
             <div
@@ -171,7 +217,6 @@ export default function ResultsPage({ params }) {
           ))}
         </div>
 
-        {/* Step Timeline */}
         <div className="card-static" style={{ padding: "1.5rem", marginBottom: "1.5rem" }}>
           <p
             className="text-label"
@@ -180,7 +225,7 @@ export default function ResultsPage({ params }) {
             Sector Progress
           </p>
           <div className="progress-timeline">
-            {sectorPhases.map((sector, idx) => {
+            {sectorsToAnalyze.map((sector, idx) => {
               const phase = getPhaseStatus(sector);
               const sectorSteps = steps.filter((s) => s.sector === sector);
               const businessCount = sectorSteps.find((s) => s.type === "scraped")?.count;
@@ -226,17 +271,9 @@ export default function ResultsPage({ params }) {
                 </div>
               );
             })}
-
-            {sectorPhases.length === 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.5rem 0" }}>
-                <div className="spinner" />
-                <span className="text-caption">Initializing analysis pipeline...</span>
-              </div>
-            )}
           </div>
         </div>
 
-        {/* Live Log Terminal */}
         {logMessages.length > 0 && (
           <div className="card-static" style={{ padding: "1rem" }}>
             <p className="text-label" style={{ marginBottom: "0.75rem", color: "var(--text-muted)" }}>
@@ -272,56 +309,52 @@ export default function ResultsPage({ params }) {
   }
 
   // ===== RESULTS VIEW =====
-  const { location, sectors, businesses, summary, targetSector } = results;
-
   return (
     <div className="container" style={{ paddingBottom: "2rem" }}>
-      {/* Results Header */}
       <div className="results-header">
         <p className="text-label text-mint" style={{ marginBottom: "0.25rem" }}>
           Analysis Complete
         </p>
         <h1>
-          {location}
-          {targetSector && targetSector !== "All Sectors" && (
-            <span className="text-gold"> · {targetSector}</span>
+          {results.location}
+          {results.targetSector && results.targetSector !== "All Sectors" && (
+            <span className="text-gold"> · {results.targetSector}</span>
           )}
         </h1>
         <div className="results-stats">
           <div className="results-stat">
             <span className="results-stat-value">
-              {summary.total_businesses_scraped}
+              {results.summary.total_businesses_scraped}
             </span>
             <span className="results-stat-label">Businesses Found</span>
           </div>
           <div className="results-stat">
             <span className="results-stat-value">
-              {summary.total_sectors_analyzed}
+              {results.summary.total_sectors_analyzed}
             </span>
             <span className="results-stat-label">Sectors Analyzed</span>
           </div>
           <div className="results-stat">
             <span className="results-stat-value" style={{ color: "var(--gold)" }}>
-              {summary.best_opportunity || "—"}
+              {results.summary.best_opportunity || "—"}
             </span>
             <span className="results-stat-label">Best Opportunity</span>
           </div>
           <div className="results-stat">
             <span className="results-stat-value">
-              {summary.lowest_competition_sector || "—"}
+              {results.summary.lowest_competition_sector || "—"}
             </span>
             <span className="results-stat-label">Lowest Competition</span>
           </div>
         </div>
       </div>
 
-      {/* Sector Cards */}
       <div className="results-grid">
-        {sectors.map((sector, idx) => {
+        {results.sectors.map((sector, idx) => {
           const isExpanded = expandedSectors[sector.sector_name];
-          const sectorBusinesses = businesses[sector.sector_name] || [];
+          const sectorBusinesses = results.businesses[sector.sector_name] || [];
           const scoreColor = getScoreColor(sector.opportunity_score);
-          const isTarget = sector.sector_name === targetSector;
+          const isTarget = sector.sector_name === results.targetSector;
 
           return (
             <div
@@ -368,7 +401,6 @@ export default function ResultsPage({ params }) {
                 </div>
               </div>
 
-              {/* Top Competitors */}
               {sector.top_competitors?.length > 0 && (
                 <div style={{ marginBottom: "1rem" }}>
                   <p className="text-label" style={{ marginBottom: "0.5rem" }}>
@@ -406,7 +438,6 @@ export default function ResultsPage({ params }) {
                 </div>
               )}
 
-              {/* Expand Toggle */}
               <button
                 className="expand-toggle"
                 onClick={() => toggleExpand(sector.sector_name)}
@@ -414,10 +445,8 @@ export default function ResultsPage({ params }) {
                 {isExpanded ? "▾ Hide Details" : "▸ Show SWOT Analysis & Businesses"}
               </button>
 
-              {/* Expandable Content */}
               <div className={`expand-content ${isExpanded ? "expanded" : ""}`}>
                 <div style={{ paddingTop: "1.5rem" }}>
-                  {/* SWOT Grid */}
                   <div className="swot-grid" style={{ marginBottom: "1.5rem" }}>
                     <div className="swot-cell swot-strengths">
                       <h4>Strengths</h4>
@@ -453,7 +482,6 @@ export default function ResultsPage({ params }) {
                     </div>
                   </div>
 
-                  {/* Business Table */}
                   <p
                     className="text-label"
                     style={{ marginBottom: "0.75rem", color: "var(--text-secondary)" }}
@@ -538,5 +566,13 @@ export default function ResultsPage({ params }) {
         })}
       </div>
     </div>
+  );
+}
+
+export default function ResultsPage() {
+  return (
+    <Suspense fallback={<div className="container" style={{paddingTop:"3rem", textAlign:"center"}}>Loading...</div>}>
+      <ResultsContent />
+    </Suspense>
   );
 }
