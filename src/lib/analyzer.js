@@ -17,7 +17,7 @@ export async function analyzeWithGemini(location, sectorName, gmapsData, researc
     return null;
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
   // Format businesses for prompt
   let gmapsSummary = '';
@@ -94,7 +94,8 @@ Your response MUST be a valid JSON object matching this exact schema:
       const result = await response.json();
       const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
       if (text) {
-        return JSON.parse(text);
+        const cleanText = text.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+        return JSON.parse(cleanText);
       }
     } else {
       const errText = await response.text();

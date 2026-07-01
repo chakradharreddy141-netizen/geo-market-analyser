@@ -67,7 +67,11 @@ function ResultsContent() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ location, sector })
           });
-          if (!scrapeRes.ok) throw new Error(`Scrape failed for ${sector} (Status ${scrapeRes.status})`);
+          if (!scrapeRes.ok) {
+            let msg = `Scrape failed for ${sector} (Status ${scrapeRes.status})`;
+            try { const data = await scrapeRes.json(); if (data.error) msg = data.error; } catch(e) {}
+            throw new Error(msg);
+          }
           const scrapeData = await scrapeRes.json();
           if (scrapeData.error) throw new Error(scrapeData.error);
           const businesses = scrapeData.businesses || [];
@@ -84,7 +88,11 @@ function ResultsContent() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ location, sector, businesses })
           });
-          if (!researchRes.ok) throw new Error(`Research failed for ${sector} (Status ${researchRes.status})`);
+          if (!researchRes.ok) {
+            let msg = `Research failed for ${sector} (Status ${researchRes.status})`;
+            try { const data = await researchRes.json(); if (data.error) msg = data.error; } catch(e) {}
+            throw new Error(msg);
+          }
           const researchResponse = await researchRes.json();
           if (researchResponse.error) throw new Error(researchResponse.error);
           const researchData = researchResponse.researchData;
@@ -96,7 +104,11 @@ function ResultsContent() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ location, sector, businesses, researchData })
           });
-          if (!synthesizeRes.ok) throw new Error(`Synthesis failed for ${sector} (Status ${synthesizeRes.status})`);
+          if (!synthesizeRes.ok) {
+            let msg = `Synthesis failed for ${sector} (Status ${synthesizeRes.status})`;
+            try { const data = await synthesizeRes.json(); if (data.error) msg = data.error; } catch(e) {}
+            throw new Error(msg);
+          }
           const synthesizeData = await synthesizeRes.json();
           if (synthesizeData.error) throw new Error(synthesizeData.error);
           const analysis = synthesizeData.analysis;
