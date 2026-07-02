@@ -17,7 +17,7 @@ export async function analyzeWithGemini(location, sectorName, gmapsData, researc
     return null;
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
   // Format businesses for prompt
   let gmapsSummary = '';
@@ -83,27 +83,36 @@ Your response MUST be a valid JSON object matching this exact schema:
     generationConfig: { responseMimeType: 'application/json' },
   };
 
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+  const maxRetries = 2;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`[analyzer] Calling Gemini API (attempt ${attempt}/${maxRetries})...`);
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
 
-    if (response.ok) {
-      const result = await response.json();
-      const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (text) {
-        const cleanText = text.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
-        return JSON.parse(cleanText);
+      if (response.ok) {
+        const result = await response.json();
+        const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          const cleanText = text.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+          return JSON.parse(cleanText);
+        }
+      } else {
+        const errText = await response.text();
+        console.error(`[analyzer] Gemini API returned ${response.status}:`, errText.slice(0, 200));
       }
-    } else {
-      const errText = await response.text();
-      console.error(`[analyzer] Gemini API returned ${response.status}:`, errText.slice(0, 200));
+    } catch (err) {
+      console.error(`[analyzer] Error calling Gemini (attempt ${attempt}):`, err.message);
     }
-    return null;
-  } catch (err) {
-    console.error(`[analyzer] Error calling Gemini:`, err.message);
-    return null;
+
+    if (attempt < maxRetries) {
+      console.log('[analyzer] Waiting 2 seconds before retrying...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
   }
+
+  return null;
 }
