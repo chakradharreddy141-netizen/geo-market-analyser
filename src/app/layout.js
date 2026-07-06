@@ -31,6 +31,9 @@ export default function RootLayout({ children }) {
                 <span className="site-logo-sub">Local Market Intelligence</span>
               </div>
             </a>
+            <a href="/" className="btn btn-secondary header-cta">
+              + New Analysis
+            </a>
           </div>
         </header>
 
@@ -38,7 +41,7 @@ export default function RootLayout({ children }) {
 
         <footer className="site-footer">
           <div className="container">
-            <p>GeoOpportunity Analyzer &middot; Powered by Playwright, Tavily &amp; Gemini AI</p>
+            <p>GeoOpportunity Analyzer &middot; Powered by SerpApi, Tavily &amp; Gemini AI</p>
           </div>
         </footer>
       </body>

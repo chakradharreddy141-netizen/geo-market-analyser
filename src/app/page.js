@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { SECTORS } from "@/lib/sectors";
+import { SECTORS, getSectorById } from "@/lib/sectors";
 
 export default function HomePage() {
   const router = useRouter();
@@ -22,12 +22,23 @@ export default function HomePage() {
       return;
     }
 
-    const target = selectedSector === "other" ? customSector.trim() : selectedSector;
+    setError("");
+    setLoading(true);
+
+    // Resolve sector ids (e.g. "gyms") to display names so the results page
+    // shows and searches a human-readable sector instead of an internal id.
+    let target = selectedSector;
+    if (selectedSector === "other") {
+      target = customSector.trim();
+    } else if (selectedSector !== "none") {
+      target = getSectorById(selectedSector)?.name || selectedSector;
+    }
+
     const params = new URLSearchParams({
       location: location.trim(),
       targetSector: target
     });
-    
+
     router.push(`/results?${params.toString()}`);
   };
 
@@ -99,7 +110,7 @@ export default function HomePage() {
           )}
 
           {error && (
-            <p style={{ color: "var(--red)", fontSize: "0.8125rem" }}>{error}</p>
+            <p role="alert" style={{ color: "var(--red)", fontSize: "0.8125rem" }}>{error}</p>
           )}
 
           <button type="submit" className="btn btn-primary" disabled={loading} style={{ marginTop: "0.5rem" }}>
@@ -131,8 +142,8 @@ export default function HomePage() {
               <div className="step-number">1</div>
               <h3>Scrape</h3>
               <p>
-                We deploy a headless browser to scan every business listing on
-                Google Maps — names, ratings, reviews, categories, and addresses.
+                We scan every business listing on Google Maps — names, ratings,
+                reviews, categories, and addresses — via SerpApi.
               </p>
             </div>
             <div className="step-card">
