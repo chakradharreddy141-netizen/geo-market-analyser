@@ -816,3 +816,27 @@ h1, h2, h3, h4, h5, h6 {
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- Link Buttons & Header CTA ---------- */
+a.btn { text-decoration: none; }
+.header-cta {
+  padding: 0.5rem 1rem;
+  font-size: 0.8125rem;
+  border-radius: var(--radius-sm);
+}
+
+/* ---------- Mobile Polish ---------- */
+@media (max-width: 768px) {
+  .insight-carousel { height: 110px; }
+  .sector-card { padding: 1.25rem; }
+}
+
+/* ---------- Accessibility: Reduced Motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  html { scroll-behavior: auto; }
+}
